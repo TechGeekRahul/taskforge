@@ -99,6 +99,16 @@ class TaskQueue:
 
         return len(due)
 
+    async def remove_from_main_queue(self, task_id: uuid.UUID) -> int:
+        """Remove all main-queue messages for ``task_id``. Returns count removed."""
+        members = await self._redis.lrange(self._queue_key, 0, -1)
+        removed = 0
+        for raw_payload in members:
+            message = TaskQueueMessage.model_validate_json(raw_payload)
+            if message.task_id == task_id:
+                removed += int(await self._redis.lrem(self._queue_key, 0, raw_payload))
+        return removed
+
     async def remove_pending_retries(self, task_id: uuid.UUID) -> int:
         """Drop any delayed retry entries for ``task_id`` (e.g. before dead-lettering)."""
         members = await self._redis.zrange(self._retry_queue_key, 0, -1)

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_task_service
 from app.schemas.task import TaskCreate, TaskRead
+from app.services.exceptions import TaskNotCancellableError, TaskNotFoundError
 from app.services.task_service import TaskEnqueueError, TaskService
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -51,4 +52,30 @@ async def get_task(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found",
         )
+    return TaskRead.from_orm_task(task)
+
+
+@router.delete(
+    "/{task_id}",
+    response_model=TaskRead,
+    summary="Cancel a task",
+)
+async def cancel_task(
+    task_id: uuid.UUID,
+    task_service: TaskService = Depends(get_task_service),
+) -> TaskRead:
+    """Cancel a pending, queued, or running task."""
+    try:
+        task = await task_service.cancel(task_id)
+    except TaskNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        ) from exc
+    except TaskNotCancellableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
     return TaskRead.from_orm_task(task)

@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.models.enums import TaskStatus
 from app.models.task import Task
 from app.schemas.task import TaskCreate
+from app.services.exceptions import TaskNotCancellableError, TaskNotFoundError
 from app.services.task_service import TaskEnqueueError, TaskService
 
 
@@ -78,3 +79,45 @@ async def test_get_by_id_returns_none(db_session) -> None:
 
     loaded = await service.get_by_id(uuid.uuid4())
     assert loaded is None
+
+
+@pytest.mark.anyio
+async def test_cancel_removes_from_queue(db_session) -> None:
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    service = TaskService(session=db_session, redis=fake_redis)
+    task = await service.submit(TaskCreate(task_type="noop"))
+    await db_session.commit()
+
+    queue_key = get_settings().task_queue_key
+    assert await fake_redis.llen(queue_key) == 1
+
+    cancelled = await service.cancel(task.id)
+    await db_session.commit()
+
+    assert cancelled.status == TaskStatus.CANCELLED
+    assert cancelled.completed_at is not None
+    assert await fake_redis.llen(queue_key) == 0
+
+
+@pytest.mark.anyio
+async def test_cancel_raises_not_found(db_session) -> None:
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    service = TaskService(session=db_session, redis=fake_redis)
+
+    with pytest.raises(TaskNotFoundError):
+        await service.cancel(uuid.uuid4())
+
+
+@pytest.mark.anyio
+async def test_cancel_raises_not_cancellable_for_dead_letter(db_session) -> None:
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    service = TaskService(session=db_session, redis=fake_redis)
+    task = Task(
+        task_type="noop",
+        status=TaskStatus.DEAD_LETTER,
+    )
+    db_session.add(task)
+    await db_session.commit()
+
+    with pytest.raises(TaskNotCancellableError):
+        await service.cancel(task.id)

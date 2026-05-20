@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,13 @@ from app.models.enums import TaskStatus
 from app.models.task import Task
 from app.queue.task_queue import TaskQueue, TaskQueueMessage
 from app.schemas.task import TaskCreate
+from app.services.exceptions import TaskNotCancellableError, TaskNotFoundError
+
+CANCELLABLE_STATUSES = frozenset({
+    TaskStatus.PENDING,
+    TaskStatus.QUEUED,
+    TaskStatus.RUNNING,
+})
 
 
 class TaskEnqueueError(Exception):
@@ -59,3 +67,28 @@ class TaskService:
     async def get_by_id(self, task_id: uuid.UUID) -> Task | None:
         """Load a task by primary key for status and detail responses."""
         return await self._session.get(Task, task_id)
+
+    async def cancel(self, task_id: uuid.UUID) -> Task:
+        """
+        Cancel a task that has not finished processing.
+
+        Removes pending queue and retry entries so workers will not pick it up.
+        """
+        task = await self.get_by_id(task_id)
+        if task is None:
+            raise TaskNotFoundError()
+
+        if task.status not in CANCELLABLE_STATUSES:
+            raise TaskNotCancellableError(
+                f"Task in status '{task.status.value}' cannot be cancelled",
+            )
+
+        await self._queue.remove_from_main_queue(task.id)
+        await self._queue.remove_pending_retries(task.id)
+
+        now = datetime.now(timezone.utc)
+        task.status = TaskStatus.CANCELLED
+        task.completed_at = now
+        await self._session.flush()
+        await self._session.refresh(task)
+        return task

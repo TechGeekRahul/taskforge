@@ -49,6 +49,31 @@ async def test_enqueue_and_dequeue_fifo() -> None:
 
 
 @pytest.mark.anyio
+async def test_remove_from_main_queue() -> None:
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    queue = TaskQueue(
+        redis=redis,
+        queue_key="test:queue",
+        retry_queue_key="test:retry",
+        dlq_key="test:dlq",
+    )
+    keep_id = uuid.uuid4()
+    drop_id = uuid.uuid4()
+    await queue.enqueue(TaskQueueMessage(task_id=keep_id, task_type="noop"))
+    await queue.enqueue(TaskQueueMessage(task_id=drop_id, task_type="noop"))
+
+    removed = await queue.remove_from_main_queue(drop_id)
+    assert removed == 1
+    assert await queue.depth() == 1
+
+    dequeued = await queue.dequeue(timeout=1)
+    assert dequeued is not None
+    assert dequeued.task_id == keep_id
+
+    await redis.aclose()
+
+
+@pytest.mark.anyio
 async def test_delayed_retry_releases_to_main_queue() -> None:
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     queue = TaskQueue(

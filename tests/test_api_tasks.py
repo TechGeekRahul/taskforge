@@ -121,6 +121,45 @@ async def test_get_task_returns_422_for_invalid_uuid(api_client: AsyncClient) ->
 
 
 @pytest.mark.anyio
+async def test_delete_task_cancels_queued_task(
+    api_client: AsyncClient,
+    fake_redis: Redis,
+) -> None:
+    created = await api_client.post("/tasks", json={"task_type": "noop"})
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+
+    queue_key = get_settings().task_queue_key
+    assert len(await fake_redis.lrange(queue_key, 0, -1)) == 1
+
+    response = await api_client.delete(f"/tasks/{task_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == TaskStatus.CANCELLED.value
+    assert body["completed_at"] is not None
+    assert await fake_redis.llen(queue_key) == 0
+
+
+@pytest.mark.anyio
+async def test_delete_task_returns_409_when_already_cancelled(api_client: AsyncClient) -> None:
+    created = await api_client.post("/tasks", json={"task_type": "noop"})
+    task_id = created.json()["id"]
+    await api_client.delete(f"/tasks/{task_id}")
+
+    again = await api_client.delete(f"/tasks/{task_id}")
+    assert again.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_delete_task_returns_404(api_client: AsyncClient) -> None:
+    response = await api_client.delete(
+        "/tasks/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_post_tasks_validates_body(api_client: AsyncClient) -> None:
     response = await api_client.post("/tasks", json={"task_type": ""})
 
