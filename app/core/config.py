@@ -33,6 +33,10 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/0",
         validation_alias="REDIS_URL",
     )
+    task_queue_key: str = Field(
+        default="taskforge:tasks:queue",
+        validation_alias="TASK_QUEUE_KEY",
+    )
 
     @property
     def is_development(self) -> bool:
