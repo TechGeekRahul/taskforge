@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.models.enums import TaskStatus
 from app.models.task import Task
+from app.queue.dead_letter import DeadLetterMessage, DeadLetterReason
 from app.queue.task_queue import TaskQueue, TaskQueueMessage
 from app.worker.handlers import get_handler
 from app.worker.retry_policy import compute_backoff_seconds
@@ -53,9 +54,11 @@ class TaskProcessor:
 
         handler = get_handler(message.task_type)
         if handler is None:
-            await self._mark_permanent_failure(
+            await self._send_to_dead_letter(
                 task,
+                message,
                 f"Unknown task_type: {message.task_type}",
+                DeadLetterReason.UNKNOWN_TASK_TYPE,
             )
             return
 
@@ -81,7 +84,12 @@ class TaskProcessor:
         task.error_message = error[:2000]
 
         if task.retry_count >= task.max_retries:
-            await self._mark_permanent_failure(task, error)
+            await self._send_to_dead_letter(
+                task,
+                message,
+                error,
+                DeadLetterReason.MAX_RETRIES_EXCEEDED,
+            )
             return
 
         task.retry_count += 1
@@ -103,8 +111,44 @@ class TaskProcessor:
             delay,
         )
 
-    async def _mark_permanent_failure(self, task: Task, error: str) -> None:
-        task.status = TaskStatus.FAILED
-        task.error_message = error[:2000]
+    async def _send_to_dead_letter(
+        self,
+        task: Task,
+        message: TaskQueueMessage,
+        error: str,
+        reason: str,
+    ) -> None:
+        """Mark task dead-lettered in Postgres and push a record to the Redis DLQ."""
+        error_text = error[:2000]
+        now = datetime.now(timezone.utc)
+
+        removed = await self._queue.remove_pending_retries(task.id)
+        if removed:
+            logger.info(
+                "removed %s pending retry entr%s for task_id=%s",
+                removed,
+                "y" if removed == 1 else "ies",
+                task.id,
+            )
+
+        record = DeadLetterMessage(
+            task_id=task.id,
+            task_type=message.task_type,
+            payload=message.payload,
+            error_message=error_text,
+            retry_count=task.retry_count,
+            max_retries=task.max_retries,
+            reason=reason,
+            failed_at=now,
+        )
+        await self._queue.send_to_dlq(record)
+
+        task.status = TaskStatus.DEAD_LETTER
+        task.error_message = error_text
+        task.completed_at = now
         await self._session.flush()
-        logger.warning("task_id=%s permanently failed: %s", task.id, error)
+        logger.warning(
+            "task_id=%s moved to dead-letter queue reason=%s",
+            task.id,
+            reason,
+        )

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
+from app.queue.dead_letter import DeadLetterMessage
 
 
 class TaskQueueMessage(BaseModel):
@@ -30,10 +31,12 @@ class TaskQueue:
         redis: Redis,
         queue_key: str,
         retry_queue_key: str,
+        dlq_key: str,
     ) -> None:
         self._redis = redis
         self._queue_key = queue_key
         self._retry_queue_key = retry_queue_key
+        self._dlq_key = dlq_key
 
     @classmethod
     def from_settings(cls, redis: Redis, settings: Settings | None = None) -> TaskQueue:
@@ -42,6 +45,7 @@ class TaskQueue:
             redis=redis,
             queue_key=cfg.task_queue_key,
             retry_queue_key=cfg.task_retry_queue_key,
+            dlq_key=cfg.task_dlq_key,
         )
 
     async def enqueue(self, message: TaskQueueMessage) -> int:
@@ -94,6 +98,26 @@ class TaskQueue:
             await pipe.execute()
 
         return len(due)
+
+    async def remove_pending_retries(self, task_id: uuid.UUID) -> int:
+        """Drop any delayed retry entries for ``task_id`` (e.g. before dead-lettering)."""
+        members = await self._redis.zrange(self._retry_queue_key, 0, -1)
+        removed = 0
+        for raw_payload in members:
+            message = TaskQueueMessage.model_validate_json(raw_payload)
+            if message.task_id == task_id:
+                await self._redis.zrem(self._retry_queue_key, raw_payload)
+                removed += 1
+        return removed
+
+    async def send_to_dlq(self, record: DeadLetterMessage) -> int:
+        """Append a dead-letter record. Returns the new DLQ length."""
+        payload = record.model_dump_json()
+        return int(await self._redis.lpush(self._dlq_key, payload))
+
+    async def dlq_depth(self) -> int:
+        """Number of records in the dead-letter queue."""
+        return int(await self._redis.llen(self._dlq_key))
 
     async def depth(self) -> int:
         """Current number of messages waiting in the queue."""

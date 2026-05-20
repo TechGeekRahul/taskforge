@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.core.config import Settings
 from app.models.enums import TaskStatus
 from app.models.task import Task
+from app.queue.dead_letter import DeadLetterMessage, DeadLetterReason
 from app.queue.task_queue import TaskQueue, TaskQueueMessage
 from app.schemas.task import TaskCreate
 from app.services.task_service import TaskService
@@ -22,6 +23,7 @@ def test_settings() -> Settings:
         retry_backoff_max_seconds=300.0,
         task_queue_key="test:queue",
         task_retry_queue_key="test:retry",
+        task_dlq_key="test:dlq",
     )
 
 
@@ -83,9 +85,22 @@ async def test_processor_marks_unknown_task_type_failed(
 
     result = await db_session.execute(select(Task).where(Task.id == task.id))
     stored = result.scalar_one()
-    assert stored.status == TaskStatus.FAILED
+    assert stored.status == TaskStatus.DEAD_LETTER
     assert stored.retry_count == 0
+    assert stored.completed_at is not None
     assert "Unknown task_type" in (stored.error_message or "")
+
+    queue = TaskQueue(
+        redis=fake_redis,
+        queue_key=test_settings.task_queue_key,
+        retry_queue_key=test_settings.task_retry_queue_key,
+        dlq_key=test_settings.task_dlq_key,
+    )
+    assert await queue.dlq_depth() == 1
+    raw = await fake_redis.lindex(test_settings.task_dlq_key, 0)
+    dlq_record = DeadLetterMessage.model_validate_json(raw)
+    assert dlq_record.task_id == task.id
+    assert dlq_record.reason == DeadLetterReason.UNKNOWN_TASK_TYPE
 
 
 @pytest.mark.anyio
@@ -118,8 +133,10 @@ async def test_processor_schedules_retry_on_handler_failure(
         redis=fake_redis,
         queue_key=test_settings.task_queue_key,
         retry_queue_key=test_settings.task_retry_queue_key,
+        dlq_key=test_settings.task_dlq_key,
     )
     assert await queue.retry_depth() == 1
+    assert await queue.dlq_depth() == 0
 
     released = await queue.release_due_retries()
     assert released == 1
@@ -150,15 +167,22 @@ async def test_processor_permanent_failure_when_retries_exhausted(
 
     result = await db_session.execute(select(Task).where(Task.id == task.id))
     stored = result.scalar_one()
-    assert stored.status == TaskStatus.FAILED
+    assert stored.status == TaskStatus.DEAD_LETTER
     assert stored.retry_count == 3
+    assert stored.completed_at is not None
 
     queue = TaskQueue(
         redis=fake_redis,
         queue_key=test_settings.task_queue_key,
         retry_queue_key=test_settings.task_retry_queue_key,
+        dlq_key=test_settings.task_dlq_key,
     )
     assert await queue.retry_depth() == 0
+    assert await queue.dlq_depth() == 1
+
+    raw = await fake_redis.lindex(test_settings.task_dlq_key, 0)
+    dlq_record = DeadLetterMessage.model_validate_json(raw)
+    assert dlq_record.reason == DeadLetterReason.MAX_RETRIES_EXCEEDED
 
 
 @pytest.mark.anyio
@@ -171,6 +195,7 @@ async def test_end_to_end_submit_and_process(db_session, fake_redis, test_settin
         redis=fake_redis,
         queue_key=test_settings.task_queue_key,
         retry_queue_key=test_settings.task_retry_queue_key,
+        dlq_key=test_settings.task_dlq_key,
     )
     message = await queue.dequeue(timeout=1)
     assert message is not None

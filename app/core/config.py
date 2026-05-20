@@ -57,6 +57,10 @@ class Settings(BaseSettings):
         ge=0,
         validation_alias="RETRY_BACKOFF_MAX_SECONDS",
     )
+    task_dlq_key: str = Field(
+        default="taskforge:tasks:dlq",
+        validation_alias="TASK_DLQ_KEY",
+    )
 
     @property
     def is_development(self) -> bool:

@@ -13,7 +13,12 @@ from app.queue.task_queue import TaskQueue, TaskQueueMessage
 @pytest.mark.anyio
 async def test_enqueue_and_dequeue_fifo() -> None:
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    queue = TaskQueue(redis=redis, queue_key="test:queue", retry_queue_key="test:retry")
+    queue = TaskQueue(
+        redis=redis,
+        queue_key="test:queue",
+        retry_queue_key="test:retry",
+        dlq_key="test:dlq",
+    )
 
     first = TaskQueueMessage(
         task_id=uuid.uuid4(),
@@ -46,7 +51,12 @@ async def test_enqueue_and_dequeue_fifo() -> None:
 @pytest.mark.anyio
 async def test_delayed_retry_releases_to_main_queue() -> None:
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    queue = TaskQueue(redis=redis, queue_key="test:queue", retry_queue_key="test:retry")
+    queue = TaskQueue(
+        redis=redis,
+        queue_key="test:queue",
+        retry_queue_key="test:retry",
+        dlq_key="test:dlq",
+    )
     message = TaskQueueMessage(task_id=uuid.uuid4(), task_type="noop")
 
     await queue.enqueue_delayed(message, delay_seconds=0)
