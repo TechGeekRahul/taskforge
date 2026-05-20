@@ -43,6 +43,20 @@ class Settings(BaseSettings):
         le=60,
         validation_alias="WORKER_BRPOP_TIMEOUT",
     )
+    task_retry_queue_key: str = Field(
+        default="taskforge:tasks:retry",
+        validation_alias="TASK_RETRY_QUEUE_KEY",
+    )
+    retry_backoff_base_seconds: float = Field(
+        default=1.0,
+        ge=0,
+        validation_alias="RETRY_BACKOFF_BASE_SECONDS",
+    )
+    retry_backoff_max_seconds: float = Field(
+        default=300.0,
+        ge=0,
+        validation_alias="RETRY_BACKOFF_MAX_SECONDS",
+    )
 
     @property
     def is_development(self) -> bool:

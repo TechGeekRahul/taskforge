@@ -38,3 +38,9 @@ async def echo_handler(payload: dict[str, Any] | None) -> None:
     """Validate echo payload; workers log completion via DB status updates."""
     if payload is None or "message" not in payload:
         raise ValueError("echo task requires payload.message")
+
+
+@register("always_fail")
+async def always_fail_handler(_payload: dict[str, Any] | None) -> None:
+    """Always raises — used in tests for retry and permanent-failure paths."""
+    raise RuntimeError("simulated handler failure")

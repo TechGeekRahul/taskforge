@@ -54,12 +54,16 @@ class WorkerRunner:
         )
 
         while not self._stop.is_set():
+            released = await self._queue.release_due_retries()
+            if released:
+                logger.debug("released %s delayed retry message(s)", released)
+
             message = await self._queue.dequeue(timeout=timeout)
             if message is None:
                 continue
 
             async with session_factory() as session:
-                processor = TaskProcessor(session)
+                processor = TaskProcessor(session, redis=self._redis, settings=self._settings)
                 try:
                     await processor.process(message)
                     await session.commit()

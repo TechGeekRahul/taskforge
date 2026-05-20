@@ -5,25 +5,31 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.models.enums import TaskStatus
 from app.models.task import Task
-from app.queue.task_queue import TaskQueueMessage
+from app.queue.task_queue import TaskQueue, TaskQueueMessage
 from app.worker.handlers import get_handler
+from app.worker.retry_policy import compute_backoff_seconds
 
 logger = logging.getLogger(__name__)
-
-
-class UnknownTaskTypeError(Exception):
-    """Raised when no handler is registered for the task_type."""
 
 
 class TaskProcessor:
     """Loads a task from the database, runs its handler, and updates status."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        redis: Redis,
+        settings: Settings | None = None,
+    ) -> None:
         self._session = session
+        self._settings = settings or get_settings()
+        self._queue = TaskQueue.from_settings(redis, self._settings)
 
     async def process(self, message: TaskQueueMessage) -> None:
         task = await self._session.get(Task, message.task_id)
@@ -31,7 +37,7 @@ class TaskProcessor:
             logger.warning("dequeued unknown task_id=%s", message.task_id)
             return
 
-        if task.status in {TaskStatus.CANCELLED, TaskStatus.COMPLETED}:
+        if task.status in {TaskStatus.CANCELLED, TaskStatus.COMPLETED, TaskStatus.DEAD_LETTER}:
             logger.info(
                 "skipping task_id=%s status=%s",
                 task.id,
@@ -47,14 +53,17 @@ class TaskProcessor:
 
         handler = get_handler(message.task_type)
         if handler is None:
-            await self._mark_failed(task, f"Unknown task_type: {message.task_type}")
+            await self._mark_permanent_failure(
+                task,
+                f"Unknown task_type: {message.task_type}",
+            )
             return
 
         try:
             await handler(message.payload)
         except Exception as exc:  # noqa: BLE001 — persist failure for observability
             logger.exception("task_id=%s handler failed", task.id)
-            await self._mark_failed(task, str(exc))
+            await self._handle_handler_failure(task, message, str(exc))
             return
 
         task.status = TaskStatus.COMPLETED
@@ -63,8 +72,39 @@ class TaskProcessor:
         await self._session.flush()
         logger.info("task_id=%s completed", task.id)
 
-    async def _mark_failed(self, task: Task, error: str) -> None:
+    async def _handle_handler_failure(
+        self,
+        task: Task,
+        message: TaskQueueMessage,
+        error: str,
+    ) -> None:
+        task.error_message = error[:2000]
+
+        if task.retry_count >= task.max_retries:
+            await self._mark_permanent_failure(task, error)
+            return
+
+        task.retry_count += 1
+        delay = compute_backoff_seconds(
+            task.retry_count,
+            base_seconds=self._settings.retry_backoff_base_seconds,
+            max_seconds=self._settings.retry_backoff_max_seconds,
+        )
+        task.status = TaskStatus.QUEUED
+        task.started_at = None
+        await self._session.flush()
+
+        await self._queue.enqueue_delayed(message, delay_seconds=delay)
+        logger.warning(
+            "task_id=%s scheduled retry %s/%s in %.1fs",
+            task.id,
+            task.retry_count,
+            task.max_retries,
+            delay,
+        )
+
+    async def _mark_permanent_failure(self, task: Task, error: str) -> None:
         task.status = TaskStatus.FAILED
         task.error_message = error[:2000]
         await self._session.flush()
-        logger.warning("task_id=%s failed: %s", task.id, error)
+        logger.warning("task_id=%s permanently failed: %s", task.id, error)
