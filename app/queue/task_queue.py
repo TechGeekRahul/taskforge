@@ -43,6 +43,19 @@ class TaskQueue:
         payload = message.model_dump_json()
         return int(await self._redis.lpush(self._queue_key, payload))
 
+    async def dequeue(self, timeout: int = 5) -> TaskQueueMessage | None:
+        """
+        Block until a message is available, then return it.
+
+        ``timeout`` is seconds to wait before returning None (worker idle poll).
+        BRPOP on the list tail pairs with LPUSH on the head (FIFO).
+        """
+        result = await self._redis.brpop(self._queue_key, timeout=timeout)
+        if result is None:
+            return None
+        _key, raw_payload = result
+        return TaskQueueMessage.model_validate_json(raw_payload)
+
     async def depth(self) -> int:
         """Current number of messages waiting in the queue."""
         return int(await self._redis.llen(self._queue_key))

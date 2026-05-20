@@ -37,6 +37,12 @@ class Settings(BaseSettings):
         default="taskforge:tasks:queue",
         validation_alias="TASK_QUEUE_KEY",
     )
+    worker_brpop_timeout: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        validation_alias="WORKER_BRPOP_TIMEOUT",
+    )
 
     @property
     def is_development(self) -> bool:
