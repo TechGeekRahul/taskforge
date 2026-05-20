@@ -97,7 +97,18 @@ flowchart TB
 
 The API starts only after Postgres and Redis are healthy. The worker starts after the API (migrations applied).
 
-### 2.3 Design principles
+### 2.3 Architecture figures (for PDF / offline docs)
+
+These PNGs are generated from `docs/diagrams/*.mmd`. Re-run `.\scripts\export-diagrams.ps1` after editing diagrams.
+
+| Figure | |
+|--------|---|
+| **System overview** | ![System architecture](docs/images/01-system-architecture.png) |
+| **Task states** | ![Task lifecycle](docs/images/02-task-lifecycle.png) |
+| **Submit flow** | ![Submit workflow](docs/images/03-submit-workflow.png) |
+| **Worker flow** | ![Worker workflow](docs/images/04-worker-workflow.png) |
+
+### 2.4 Design principles
 
 - **Postgres is the source of truth** for task status and audit history.
 - **Redis is the transport layer** for fast enqueue/dequeue and delayed retries.
@@ -546,16 +557,25 @@ uvicorn app.main:app --reload
 python -m app.worker
 ```
 
-### Generate PDF from this README (optional)
+### Architecture diagrams in PDF
 
-GitHub renders this file automatically. To export a PDF locally:
+Mermaid blocks in this file **render on GitHub** but most PDF exporters **do not** draw them unless you pre-export images.
 
-```bash
-# Using pandoc (install separately)
-pandoc README.md -o TaskForge-Documentation.pdf --pdf-engine=xelatex -V geometry:margin=1in
+| Approach | Steps |
+|----------|--------|
+| **Easiest** | Push to GitHub → open README → **Print → Save as PDF** (enable “Background graphics”) |
+| **Best quality** | Export PNGs from `docs/diagrams/*.mmd` via [mermaid.live](https://mermaid.live) → save under `docs/images/` → embed in doc → PDF |
+| **Automated** | `npm i -g @mermaid-js/mermaid-cli` then `.\scripts\export-diagrams.ps1` |
+
+Full guide: **[docs/PDF-AND-DIAGRAMS.md](docs/PDF-AND-DIAGRAMS.md)**
+
+After exporting images, embed in Markdown:
+
+```markdown
+![System architecture](docs/images/01-system-architecture.png)
 ```
 
-Or open `README.md` in VS Code / Cursor and use **Markdown PDF** or print to PDF from the browser after viewing on GitHub.
+Then export with pandoc, Typora, or Markdown PDF — diagrams will appear in the PDF.
 
 ---
 
