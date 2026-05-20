@@ -1,0 +1,17 @@
+sequenceDiagram
+    participant Client
+    participant API
+    participant TaskService
+    participant Postgres
+    participant Redis
+
+    Client->>API: POST /api/v1/tasks + Bearer JWT
+    API->>API: Rate limit + validate body
+    TaskService->>Postgres: INSERT status=pending
+    TaskService->>Redis: LPUSH queue message
+    alt Redis error
+        TaskService-->>API: Rollback → 503
+    else OK
+        TaskService->>Postgres: UPDATE status=queued
+        API-->>Client: 201 TaskRead
+    end

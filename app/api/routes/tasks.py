@@ -4,12 +4,23 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.api.deps import get_task_service
+from app.core.config import get_settings
+from app.core.security import get_current_user
 from app.schemas.task import TaskCreate, TaskRead
 from app.services.exceptions import TaskNotCancellableError, TaskNotFoundError
 from app.services.task_service import TaskEnqueueError, TaskService
+
+limiter = Limiter(key_func=get_remote_address)
+
+
+def _rate_limit() -> str:
+    return get_settings().rate_limit
+
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -20,9 +31,12 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
     status_code=status.HTTP_201_CREATED,
     summary="Submit a background task",
 )
+@limiter.limit(_rate_limit)
 async def create_task(
+    request: Request,
     body: TaskCreate,
     task_service: TaskService = Depends(get_task_service),
+    _user: str = Depends(get_current_user),
 ) -> TaskRead:
     """Persist a task and enqueue it on Redis for worker processing."""
     try:

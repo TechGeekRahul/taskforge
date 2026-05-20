@@ -23,4 +23,5 @@ async def test_root_returns_service_metadata() -> None:
     body = response.json()
     assert body["service"] == "taskforge"
     assert body["status"] == "ok"
+    assert body["api"] == "/api/v1"
     assert "version" in body

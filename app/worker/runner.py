@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
 from redis.asyncio import Redis
@@ -25,6 +26,7 @@ class WorkerRunner:
         redis: Redis,
         settings: Settings | None = None,
     ) -> None:
+        self._redis = redis
         self._settings = settings or get_settings()
         self._queue = TaskQueue.from_settings(redis, self._settings)
         self._stop = asyncio.Event()
@@ -54,6 +56,7 @@ class WorkerRunner:
         )
 
         while not self._stop.is_set():
+            await self._touch_heartbeat()
             released = await self._queue.release_due_retries()
             if released:
                 logger.debug("released %s delayed retry message(s)", released)
@@ -75,6 +78,13 @@ class WorkerRunner:
                     )
 
         logger.info("worker stopped")
+
+    async def _touch_heartbeat(self) -> None:
+        await self._redis.set(
+            self._settings.worker_heartbeat_key,
+            datetime.now(timezone.utc).isoformat(),
+            ex=self._settings.worker_heartbeat_ttl_seconds,
+        )
 
 
 async def run_worker(settings: Settings | None = None) -> None:

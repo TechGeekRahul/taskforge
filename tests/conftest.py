@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import os
+
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-pytest-only")
+os.environ.setdefault("AUTH_USERNAME", "admin")
+os.environ.setdefault("AUTH_PASSWORD", "admin")
+
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -10,9 +16,21 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
+from app.core.config import get_settings
+from app.core.security import create_access_token
 from app.db.base import Base
 from app.db.session import dispose_engine
+
+get_settings.cache_clear()
 from app.models import task  # noqa: F401 — register ORM models
+
+API_V1 = "/api/v1"
+
+
+@pytest.fixture
+def auth_headers() -> dict[str, str]:
+    token = create_access_token("test-client", get_settings())
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture(scope="session")

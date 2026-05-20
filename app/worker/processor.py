@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.context import bind_task_context
+from app.observability import prometheus as prom
 from app.models.enums import TaskStatus
 from app.models.task import Task
 from app.queue.dead_letter import DeadLetterMessage, DeadLetterReason
@@ -33,6 +36,7 @@ class TaskProcessor:
         self._queue = TaskQueue.from_settings(redis, self._settings)
 
     async def process(self, message: TaskQueueMessage) -> None:
+        bind_task_context(message.task_id)
         task = await self._session.get(Task, message.task_id)
         if task is None:
             logger.warning("dequeued unknown task_id=%s", message.task_id)
@@ -62,6 +66,7 @@ class TaskProcessor:
             )
             return
 
+        start = time.perf_counter()
         try:
             await handler(message.payload)
         except Exception as exc:  # noqa: BLE001 — persist failure for observability
@@ -69,10 +74,13 @@ class TaskProcessor:
             await self._handle_handler_failure(task, message, str(exc))
             return
 
+        elapsed = time.perf_counter() - start
+        prom.TASK_PROCESSING_SECONDS.labels(task_type=message.task_type).observe(elapsed)
         task.status = TaskStatus.COMPLETED
         task.completed_at = datetime.now(timezone.utc)
         task.error_message = None
         await self._session.flush()
+        prom.record_completed(message.task_type)
         logger.info("task_id=%s completed", task.id)
 
     async def _handle_handler_failure(
@@ -147,6 +155,7 @@ class TaskProcessor:
         task.error_message = error_text
         task.completed_at = now
         await self._session.flush()
+        prom.record_failed(message.task_type, reason)
         logger.warning(
             "task_id=%s moved to dead-letter queue reason=%s",
             task.id,

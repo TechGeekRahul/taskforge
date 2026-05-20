@@ -61,6 +61,34 @@ class Settings(BaseSettings):
         default="taskforge:tasks:dlq",
         validation_alias="TASK_DLQ_KEY",
     )
+    worker_heartbeat_key: str = Field(
+        default="taskforge:worker:heartbeat",
+        validation_alias="WORKER_HEARTBEAT_KEY",
+    )
+    worker_heartbeat_ttl_seconds: int = Field(
+        default=60,
+        ge=10,
+        validation_alias="WORKER_HEARTBEAT_TTL_SECONDS",
+    )
+
+    jwt_secret_key: str = Field(
+        default="change-me-jwt-secret-in-production",
+        validation_alias="JWT_SECRET_KEY",
+    )
+    jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
+    jwt_access_token_expire_minutes: int = Field(
+        default=60,
+        ge=1,
+        validation_alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
+    )
+    auth_username: str = Field(default="admin", validation_alias="AUTH_USERNAME")
+    auth_password: str = Field(
+        default="change-me-auth-password",
+        validation_alias="AUTH_PASSWORD",
+    )
+
+    rate_limit_enabled: bool = Field(default=True, validation_alias="RATE_LIMIT_ENABLED")
+    rate_limit: str = Field(default="30/minute", validation_alias="RATE_LIMIT")
 
     @property
     def is_development(self) -> bool:

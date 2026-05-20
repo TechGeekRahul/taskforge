@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -12,7 +13,11 @@ from app.models.enums import TaskStatus
 from app.models.task import Task
 from app.queue.task_queue import TaskQueue, TaskQueueMessage
 from app.schemas.task import TaskCreate
+from app.core.context import bind_task_context
+from app.observability import prometheus as prom
 from app.services.exceptions import TaskNotCancellableError, TaskNotFoundError
+
+logger = logging.getLogger(__name__)
 
 CANCELLABLE_STATUSES = frozenset({
     TaskStatus.PENDING,
@@ -47,6 +52,7 @@ class TaskService:
         )
         self._session.add(task)
         await self._session.flush()
+        bind_task_context(task.id)
 
         message = TaskQueueMessage(
             task_id=task.id,
@@ -62,6 +68,8 @@ class TaskService:
         task.status = TaskStatus.QUEUED
         await self._session.flush()
         await self._session.refresh(task)
+        prom.record_submitted(task.task_type)
+        logger.info("task submitted task_type=%s", task.task_type)
         return task
 
     async def get_by_id(self, task_id: uuid.UUID) -> Task | None:

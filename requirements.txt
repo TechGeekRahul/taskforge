@@ -1,6 +1,7 @@
 # API framework
 fastapi>=0.115.0,<0.116.0
 uvicorn[standard]>=0.32.0,<0.33.0
+python-multipart>=0.0.12,<0.1.0
 
 # Configuration
 pydantic>=2.10.0,<3.0.0
@@ -13,6 +14,13 @@ alembic>=1.14.0,<1.15.0
 
 # Queue
 redis>=5.2.0,<6.0.0
+
+# Security
+python-jose[cryptography]>=3.3.0,<4.0.0
+slowapi>=0.1.9,<0.2.0
+
+# Observability
+prometheus-client>=0.21.0,<0.22.0
 
 # Dev / test (pinned loosely; tighten in CI later)
 fakeredis[lua]>=2.26.0,<3.0.0

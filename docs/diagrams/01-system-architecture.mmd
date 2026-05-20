@@ -1,0 +1,28 @@
+flowchart TB
+    subgraph Clients
+        C[HTTP Clients / Scripts / Cron]
+    end
+
+    subgraph API["API Service (uvicorn)"]
+        MW[Middleware]
+        R1["/api/v1/*"]
+        R2["/health /metrics"]
+    end
+
+    subgraph Worker["Worker Service (python -m app.worker)"]
+        LOOP[BRPOP Loop]
+        PROC[TaskProcessor]
+        H[Handlers]
+    end
+
+    subgraph Stores
+        PG[(PostgreSQL)]
+        RD[(Redis)]
+    end
+
+    C --> API
+    API --> PG
+    API --> RD
+    Worker --> PG
+    Worker --> RD
+    LOOP --> PROC --> H

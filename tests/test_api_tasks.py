@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core.config import get_settings
 from app.db.session import dispose_engine, get_session
 from app.main import app
-from app.queue.redis_client import close_redis, get_redis
 from app.models.enums import TaskStatus
+from app.queue.redis_client import close_redis, get_redis
+from tests.conftest import API_V1
 
 
 @pytest_asyncio.fixture
@@ -67,10 +68,21 @@ async def api_client(
 
 
 @pytest.mark.anyio
-async def test_post_tasks_returns_201_and_enqueues(api_client: AsyncClient, fake_redis: Redis) -> None:
+async def test_post_tasks_requires_auth(api_client: AsyncClient) -> None:
+    response = await api_client.post(f"{API_V1}/tasks", json={"task_type": "noop"})
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_post_tasks_returns_201_and_enqueues(
+    api_client: AsyncClient,
+    fake_redis: Redis,
+    auth_headers: dict[str, str],
+) -> None:
     response = await api_client.post(
-        "/tasks",
+        f"{API_V1}/tasks",
         json={"task_type": "send_email", "payload": {"to": "a@b.com"}},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -89,12 +101,19 @@ async def test_post_tasks_returns_201_and_enqueues(api_client: AsyncClient, fake
 
 
 @pytest.mark.anyio
-async def test_get_task_returns_200(api_client: AsyncClient) -> None:
-    created = await api_client.post("/tasks", json={"task_type": "noop"})
+async def test_get_task_returns_200(
+    api_client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    created = await api_client.post(
+        f"{API_V1}/tasks",
+        json={"task_type": "noop"},
+        headers=auth_headers,
+    )
     assert created.status_code == 201
     task_id = created.json()["id"]
 
-    response = await api_client.get(f"/tasks/{task_id}")
+    response = await api_client.get(f"{API_V1}/tasks/{task_id}")
 
     assert response.status_code == 200
     body = response.json()
@@ -106,7 +125,7 @@ async def test_get_task_returns_200(api_client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_get_task_returns_404_for_unknown_id(api_client: AsyncClient) -> None:
     response = await api_client.get(
-        "/tasks/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        f"{API_V1}/tasks/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     )
 
     assert response.status_code == 404
@@ -115,7 +134,7 @@ async def test_get_task_returns_404_for_unknown_id(api_client: AsyncClient) -> N
 
 @pytest.mark.anyio
 async def test_get_task_returns_422_for_invalid_uuid(api_client: AsyncClient) -> None:
-    response = await api_client.get("/tasks/not-a-uuid")
+    response = await api_client.get(f"{API_V1}/tasks/not-a-uuid")
 
     assert response.status_code == 422
 
@@ -124,15 +143,20 @@ async def test_get_task_returns_422_for_invalid_uuid(api_client: AsyncClient) ->
 async def test_delete_task_cancels_queued_task(
     api_client: AsyncClient,
     fake_redis: Redis,
+    auth_headers: dict[str, str],
 ) -> None:
-    created = await api_client.post("/tasks", json={"task_type": "noop"})
+    created = await api_client.post(
+        f"{API_V1}/tasks",
+        json={"task_type": "noop"},
+        headers=auth_headers,
+    )
     assert created.status_code == 201
     task_id = created.json()["id"]
 
     queue_key = get_settings().task_queue_key
     assert len(await fake_redis.lrange(queue_key, 0, -1)) == 1
 
-    response = await api_client.delete(f"/tasks/{task_id}")
+    response = await api_client.delete(f"{API_V1}/tasks/{task_id}")
 
     assert response.status_code == 200
     body = response.json()
@@ -142,25 +166,39 @@ async def test_delete_task_cancels_queued_task(
 
 
 @pytest.mark.anyio
-async def test_delete_task_returns_409_when_already_cancelled(api_client: AsyncClient) -> None:
-    created = await api_client.post("/tasks", json={"task_type": "noop"})
+async def test_delete_task_returns_409_when_already_cancelled(
+    api_client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    created = await api_client.post(
+        f"{API_V1}/tasks",
+        json={"task_type": "noop"},
+        headers=auth_headers,
+    )
     task_id = created.json()["id"]
-    await api_client.delete(f"/tasks/{task_id}")
+    await api_client.delete(f"{API_V1}/tasks/{task_id}")
 
-    again = await api_client.delete(f"/tasks/{task_id}")
+    again = await api_client.delete(f"{API_V1}/tasks/{task_id}")
     assert again.status_code == 409
 
 
 @pytest.mark.anyio
 async def test_delete_task_returns_404(api_client: AsyncClient) -> None:
     response = await api_client.delete(
-        "/tasks/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        f"{API_V1}/tasks/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     )
     assert response.status_code == 404
 
 
 @pytest.mark.anyio
-async def test_post_tasks_validates_body(api_client: AsyncClient) -> None:
-    response = await api_client.post("/tasks", json={"task_type": ""})
+async def test_post_tasks_validates_body(
+    api_client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    response = await api_client.post(
+        f"{API_V1}/tasks",
+        json={"task_type": ""},
+        headers=auth_headers,
+    )
 
     assert response.status_code == 422

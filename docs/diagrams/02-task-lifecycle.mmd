@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> pending: API creates row
+    pending --> queued: Redis enqueue OK
+    queued --> running: Worker dequeues
+    running --> completed: Handler OK
+    running --> queued: Retry scheduled
+    running --> dead_letter: Permanent failure
+    queued --> cancelled: DELETE /tasks/id
+    running --> cancelled: DELETE /tasks/id
+    dead_letter --> [*]
+    completed --> [*]
+    cancelled --> [*]

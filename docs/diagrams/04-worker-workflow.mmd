@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant Runner as WorkerRunner
+    participant Redis
+    participant Processor as TaskProcessor
+    participant Postgres
+    participant Handler
+
+    loop Each cycle
+        Runner->>Redis: SET heartbeat (TTL)
+        Runner->>Redis: Release due retries → main queue
+        Runner->>Redis: BRPOP (blocking)
+    end
+    Runner->>Processor: process(message)
+    Processor->>Postgres: status=running
+    Processor->>Handler: await handler(payload)
+    alt Success
+        Processor->>Postgres: status=completed
+    else Retries remain
+        Processor->>Redis: ZADD retry schedule
+        Processor->>Postgres: status=queued
+    else Exhausted / unknown type
+        Processor->>Redis: LPUSH DLQ
+        Processor->>Postgres: status=dead_letter
+    end
