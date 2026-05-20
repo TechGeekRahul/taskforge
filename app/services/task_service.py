@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,3 +55,7 @@ class TaskService:
         await self._session.flush()
         await self._session.refresh(task)
         return task
+
+    async def get_by_id(self, task_id: uuid.UUID) -> Task | None:
+        """Load a task by primary key for status and detail responses."""
+        return await self._session.get(Task, task_id)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_task_service
@@ -30,4 +32,23 @@ async def create_task(
             detail="Task queue is unavailable",
         ) from exc
 
+    return TaskRead.from_orm_task(task)
+
+
+@router.get(
+    "/{task_id}",
+    response_model=TaskRead,
+    summary="Get task status",
+)
+async def get_task(
+    task_id: uuid.UUID,
+    task_service: TaskService = Depends(get_task_service),
+) -> TaskRead:
+    """Return the current persisted state of a task."""
+    task = await task_service.get_by_id(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
     return TaskRead.from_orm_task(task)

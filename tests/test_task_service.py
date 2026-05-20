@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 import fakeredis.aioredis
 import pytest
@@ -56,3 +57,24 @@ async def test_submit_leaves_no_row_when_enqueue_fails(db_session, monkeypatch) 
 
     result = await db_session.execute(select(Task))
     assert result.scalars().all() == []
+
+
+@pytest.mark.anyio
+async def test_get_by_id_returns_task(db_session) -> None:
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    service = TaskService(session=db_session, redis=fake_redis)
+    task = await service.submit(TaskCreate(task_type="noop"))
+    await db_session.commit()
+
+    loaded = await service.get_by_id(task.id)
+    assert loaded is not None
+    assert loaded.id == task.id
+
+
+@pytest.mark.anyio
+async def test_get_by_id_returns_none(db_session) -> None:
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    service = TaskService(session=db_session, redis=fake_redis)
+
+    loaded = await service.get_by_id(uuid.uuid4())
+    assert loaded is None

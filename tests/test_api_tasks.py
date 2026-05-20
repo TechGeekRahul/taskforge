@@ -1,4 +1,4 @@
-"""API tests for POST /tasks."""
+"""API tests for task routes."""
 
 from __future__ import annotations
 
@@ -86,6 +86,38 @@ async def test_post_tasks_returns_201_and_enqueues(api_client: AsyncClient, fake
     assert len(messages) == 1
     queued = json.loads(messages[0])
     assert queued["task_id"] == body["id"]
+
+
+@pytest.mark.anyio
+async def test_get_task_returns_200(api_client: AsyncClient) -> None:
+    created = await api_client.post("/tasks", json={"task_type": "noop"})
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+
+    response = await api_client.get(f"/tasks/{task_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == task_id
+    assert body["task_type"] == "noop"
+    assert body["status"] == TaskStatus.QUEUED.value
+
+
+@pytest.mark.anyio
+async def test_get_task_returns_404_for_unknown_id(api_client: AsyncClient) -> None:
+    response = await api_client.get(
+        "/tasks/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+
+    assert response.status_code == 404
+    assert response.json().get("detail") == "Task not found"
+
+
+@pytest.mark.anyio
+async def test_get_task_returns_422_for_invalid_uuid(api_client: AsyncClient) -> None:
+    response = await api_client.get("/tasks/not-a-uuid")
+
+    assert response.status_code == 422
 
 
 @pytest.mark.anyio
